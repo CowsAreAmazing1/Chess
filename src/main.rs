@@ -5,7 +5,16 @@
 #![allow(unused_mut)]
 #![allow(unused_assignments)]
 
-use std::iter::Filter;
+use crate::board::*;
+use crate::piece::*;
+use crate::r#move::*;
+
+mod board;
+mod piece;
+mod r#move;
+
+
+use std::iter::Iterator;
 use std::*;
 use std::f32::consts::E;
 use std::thread::sleep;
@@ -40,361 +49,14 @@ const BLACK:     u8 = 16;
 const TYPEMASK:  u8 = 0b00111;
 const COLORMASK: u8 = WHITE | BLACK;
 
-const SETUP: &str = "8/8/8/8/1k5Q/8/8/8 b - - 0 1";
+//const SETUP: &str = "8/8/8/PPP5/PK5r/PPP2N2/6P1/8 w - - 0 1";
 //const SETUP: &str = "8/8/8/8/4n1n1/2n3n1/P1P1P1P1/8 w - - 0 1";
 //const SETUP: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1";
-//const SETUP: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1";
+const SETUP: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1";
 
 
 const DIRECTION_OFFSETS: [i8; 8] = [ 8, 1, -8, -1, 9, -7, -9, 7 ];
 
-#[derive(Clone, Copy, Debug)]
-struct Piece {
-    id: u8,
-    index: u8,
-}
-
-impl Piece {
-    fn is_color(&self, color: u8) -> bool {
-        return (self.id & COLORMASK) == color;
-    }
-
-    fn color(&self) -> u8 {
-        return self.id & COLORMASK;
-    }
-
-    fn piece_type(&self) -> u8{
-        return self.id & TYPEMASK;
-    }
-
-    fn is_rook_or_queen(&self) -> bool {
-        return (self.id & 0b110) == 0b110;
-    }
-
-    fn is_bishop_or_queen(&self) -> bool {
-        return (self.id & 0b101) == 0b101;
-    }
-
-    fn is_sliding_piece(&self) -> bool {
-        return (self.id & 0b100) != 0;
-    }
-
-    fn enemy_color(&self) -> u8 {
-        return if self.color() == WHITE { BLACK } else { WHITE }
-    }
-    fn has_trait(&self, thing: u8) -> bool {
-        if thing == 255 {
-            return true;
-        } else if thing == WHITE || thing == BLACK {
-            return self.id & COLORMASK == thing;
-        } else if thing < WHITE {
-            return self.id & TYPEMASK == thing;
-        } else {
-            return self.id == thing;
-        }
-    }
-    
-
-    fn to_char(&self) -> char {
-        let tipe = match self.piece_type() {
-            KING => 'k',
-            PAWN => 'p',
-            KNIGHT => 'n',
-            BISHOP => 'b',
-            ROOK => 'r',
-            QUEEN => 'q',
-            0 => '-',
-            _ => panic!("ur mum")
-        };
-
-        return if self.color() == WHITE { tipe.to_ascii_uppercase() } else { tipe }
-    }
-
-    fn to_pretty_char(&self) -> ColoredString {
-        if RENDER_PIECES {
-            return match self.color() {
-                WHITE => match self.piece_type() {
-                    KING => "\u{2654}".bright_yellow().bold(),
-                    PAWN => "\u{2659}".bright_yellow().bold(),
-                    KNIGHT => "\u{2658}".bright_yellow().bold(),
-                    BISHOP => "\u{2657}".bright_yellow().bold(),
-                    ROOK => "\u{2656}".bright_yellow().bold(),
-                    QUEEN => "\u{2655}".bright_yellow().bold(),
-                    _ => panic!("{} is an invalid white piece type", self.piece_type())
-                }
-                BLACK => match self.piece_type() {
-                    KING => "\u{2654}".cyan().bold(),
-                    PAWN => "\u{2659}".cyan().bold(),
-                    KNIGHT => "\u{2658}".cyan().bold(),
-                    BISHOP => "\u{2657}".cyan().bold(),
-                    ROOK => "\u{2656}".cyan().bold(),
-                    QUEEN => "\u{2655}".cyan().bold(),
-                    _ => panic!("{} is an invalid white piece type", self.piece_type())
-                }
-
-                0 => "\u{2007}".black(),
-                _ => panic!("{} is an invalid color", self.color())
-            }
-        } else {
-            return match self.color() {
-                WHITE => match self.piece_type() {
-                            KING => "K".red(),
-                            PAWN => "P".red(),
-                            KNIGHT => "N".red(),
-                            BISHOP => "B".red(),
-                            ROOK => "R".red(),
-                            QUEEN => "Q".red(),
-                            _ => panic!("{} is an invalid white piece type", self.piece_type())
-                        }
-                BLACK => match self.piece_type() {
-                            KING => "k".blue(),
-                            PAWN => "p".blue(),
-                            KNIGHT => "n".blue(),
-                            BISHOP => "b".blue(),
-                            ROOK => "r".blue(),
-                            QUEEN => "q".blue(),
-                            _ => panic!("{} is an invalid black piece type", self.piece_type())
-                        }
-                0 => "\u{2007}".black(),
-                _ => panic!("{} is an invalid color", self.color())
-            }
-        }
-        
-    }
-}
-
-impl fmt::Display for Piece {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_pretty_char())
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Board {
-    squares: [ Piece; 64 ],
-    turn_index: u32,
-    enpassantables: [[ bool; 8 ]; 2],
-}
-
-impl Board {
-    fn color_to_move(&self) -> u8 {
-        return if self.turn_index % 2 == 0 { WHITE } else { BLACK };
-    }
-
-    fn piece_grid(&self, cond: u8)/* -> [ Piece; 64 ] */ {
-        let new_board: [ Piece; 64 ] = [ Piece { id: 0, index: 0 }; 64];
-    }
-
-    fn display(&self) {
-        display_board(&self, 255);
-    }
-
-    fn display_with_thing(&self, thing: u8) {
-        display_board(&self, thing);
-    }
-
-    fn make(&mut self, movee: &Move) {
-        self.enpassantables[1] = self.enpassantables[0];
-
-        if self.squares[movee.start as usize].piece_type() == PAWN && movee.start / 8 == 1 && movee.end / 8 == 3 {
-            self.enpassantables[0][(movee.start % 8) as usize] = false;
-        }
-
-        self.squares[movee.end as usize].id = NONE;
-        self.squares.swap(movee.start as usize, movee.end as usize);
-
-        self.squares[movee.start as usize].index = movee.start;
-        self.squares[movee.end as usize].index = movee.end;
-
-        self.turn_index += 1;
-
-    }
-
-    fn unmake(&mut self, movee: &Move) {
-        self.squares.swap(movee.start as usize, movee.end as usize);
-        self.turn_index -= 1;
-    }
-
-    fn gen_sliding_moves(&self, piece: &Piece) -> Vec<Move> {
-        let start_pos: u8 = piece.index;
-        let mut end_pos;
-        let mut moves = vec![];
-        let s_index: usize;
-        let e_index: usize;
-
-        match piece.piece_type() {
-            ROOK => { s_index = 0; e_index = 4; },
-            BISHOP => { s_index = 4; e_index = 8; },
-            QUEEN => { s_index = 0; e_index = 8; },
-            _ => panic!("impossible! what {}", piece.to_char()),
-        }
-
-        for i in s_index..e_index {
-            end_pos = start_pos;
-            for j in 0..precompute_move_data()[start_pos as usize][i] {
-
-                
-
-                end_pos = (end_pos as i8 + DIRECTION_OFFSETS[i] as i8) as u8;
-                let target_piece: Piece = self.squares[end_pos as usize];
-
-                if piece.is_color(target_piece.color()) {
-                    break;
-                }
-
-                moves.push(Move { start: start_pos, end: end_pos});
-
-                if target_piece.is_color(piece.enemy_color()) {
-                    break;
-                }
-            }
-        }
-        return moves;
-    }
-
-    fn gen_other_moves(&self, piece: &Piece) -> Vec<Move> {
-        let mut moves: Vec<Move> = vec![];
-
-        let mut unchecked_indices: Vec<(i8,i8)> = vec![];
-        
-        match piece.piece_type() {
-            PAWN => {
-                if piece.index / 8 == 0 || piece.index / 8 == 7 {
-                    return moves;
-                }
-
-                match piece.color() {
-                    WHITE => {
-                        unchecked_indices.push((0,1));
-                        if piece.index / 8 == 1 { unchecked_indices.push((0,2)) }
-
-                        if self.squares[(piece.index + 7) as usize].color() == piece.enemy_color() {
-                            unchecked_indices.push((-1,1));
-                        }
-                        if self.squares[(piece.index + 9) as usize].color() == piece.enemy_color() {
-                            unchecked_indices.push((1,1));
-                        }
-                    },
-                    BLACK => {
-                        unchecked_indices.push((0,-1));
-                        if piece.index / 8 == 6 { unchecked_indices.push((0,-2)) }
-
-                        if self.squares[(piece.index - 7) as usize].color() == piece.enemy_color() {
-                            unchecked_indices.push((1,-1));
-                        }
-                        if self.squares[(piece.index - 9) as usize].color() == piece.enemy_color() {
-                            unchecked_indices.push((-1,-1));
-                        }
-                    },
-                    _ => panic!("shouldnt be {}", piece),
-                }
-            }
-            KNIGHT => {
-                unchecked_indices = [(1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2)].to_vec();
-            },
-            KING => {
-                unchecked_indices = [(0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1)].to_vec();
-            }
-            _ => panic!("cant move nothing {}", piece.to_char()),
-        }
-        
-        let mut alarm: bool = false;
-
-        for (i, m) in unchecked_indices.iter().enumerate() {
-            if alarm && piece.piece_type() == PAWN { alarm = false; continue }
-
-            let x: i8 = (piece.index % 8) as i8;
-            let y: i8 = (piece.index / 8) as i8;
-
-            let target_pos: (i8, i8) = ( x + m.0, y + m.1 );
-
-            if target_pos.0 < 0 || target_pos.0 > 7 || target_pos.1 < 0 || target_pos.1 > 7 {
-                continue;
-            }
-            
-
-            let target_piece: Piece = self.squares[ (8 * target_pos.1 + target_pos.0) as usize ];
-
-            if target_piece.is_color(piece.color()) {
-                continue;
-            }
-
-            if piece.piece_type() == PAWN && i == 0 && target_piece.piece_type() != NONE {
-                alarm = true;
-                continue;
-            }
-
-            if (y == 1 || y == 6) && piece.piece_type() == PAWN && i == 1 && target_piece.piece_type() != NONE {
-                continue;
-            }
-            
-            moves.push(Move { start: piece.index as u8, end: target_piece.index as u8});
-        }
-
-        return moves;
-    }
-
-    //let mut moves: Vec<Move> = vec![];
-    fn gen_moves(&self) -> Vec<Move> {
-        let mut moves: Vec<Move> = vec![];
-        let mut piece: Piece;
-
-        for piece in &self.squares {
-            if piece.piece_type() == NONE || piece.color() != self.color_to_move() {
-                continue;
-            }
-
-            if piece.is_sliding_piece() {
-                moves.append(&mut self.gen_sliding_moves(piece));
-            } else {
-                moves.append(&mut self.gen_other_moves(piece));
-            }
-
-
-        }
-
-        return moves;
-    }
-
-    fn gen_moves_at(&self, index: u8) -> Vec<Move> {
-        let mut moves: Vec<Move> = vec![];
-        let piece = self.squares[index as usize];
-
-        if piece.is_sliding_piece() {
-            moves.append(&mut self.gen_sliding_moves(&piece));
-        } else {
-            moves.append(&mut self.gen_other_moves(&piece));
-        }
-
-        return moves;
-    }
-
-    fn check_legality(&self, movee: &Move) -> bool {
-        let mut temp = self.clone();
-
-        temp.make(movee);
-        let moves_to_check = temp.gen_moves();
-
-        for i in moves_to_check {
-            if temp.squares[i.end as usize].piece_type() == KING {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    fn display_all_moves(&self) {
-        let moves = self.gen_moves();
-        let mut boards = vec![ self.to_owned(); moves.len() ];
-
-        for i in 0..moves.len() {
-            boards[i].make(&moves[i]);
-            boards[i].display();
-        }
-    }
-
-}
 
 fn next_layer(layer: &Vec<Board>) -> Vec<Board> {
     let mut moves = vec![];
@@ -443,14 +105,14 @@ fn display_board(board: &Board, thing: u8) {
     if DISPLAY_GRID {
         let vbar = "\u{2502}".to_owned();
         let hbar = "\u{2500}".to_owned();
-        let ul = "\u{250C}".to_owned();
-        let ur = "\u{2510}".to_owned();
-        let ll = "\u{2514}".to_owned();
-        let lr = "\u{2518}".to_owned();
-        let nt = "\u{252C}".to_owned();
-        let st = "\u{2534}".to_owned();
-        let wt = "\u{251C}".to_owned();
-        let et = "\u{2524}".to_owned();
+        let ul   = "\u{250C}".to_owned();
+        let ur   = "\u{2510}".to_owned();
+        let ll   = "\u{2514}".to_owned();
+        let lr   = "\u{2518}".to_owned();
+        let nt   = "\u{252C}".to_owned();
+        let st   = "\u{2534}".to_owned();
+        let wt   = "\u{251C}".to_owned();
+        let et   = "\u{2524}".to_owned();
         let plus = "\u{253C}".to_owned();
 
         let h3 = hbar.repeat(3);
@@ -538,23 +200,6 @@ fn display_board(board: &Board, thing: u8) {
             }
         }
         println!("{}", sep)
-    }
-}
-
-struct Move {
-    start: u8,
-    end:   u8,
-}
-
-impl Move {
-    fn display(&self) -> String {
-        return format!(
-            "{}{}{}{}",
-            (&self.start % 8 + 97) as char,
-            &self.start/8 + 1,
-            (&self.end % 8 + 97) as char,
-            &self.end/8 + 1
-        )
     }
 }
 
@@ -646,11 +291,30 @@ fn main() {
     board.display();
 
     println!("{} to move:", if board.color_to_move() == WHITE { "White" } else { "Black" });
-    //let mut boards: Vec<Board> = vec![board];
+
+    /*
+    let mut boards: Vec<Board> = vec![board];
+    let moves: Vec<Move> = board.gen_moves().into_iter().filter(|x| board.check_legality(x)).collect();
+    boards = vec![ board; moves.len() ];
+    
+    for i in 0..moves.len() {
+        boards[i].make(&moves[i]);
+    }
+    
+    for i in 0..boards.len() {
+        boards[i].display();
+        println!("{:?}", board.check_legality(&moves[i]));
+    }*/
+    
+
+
+
+
+
 
     //board.display_all_moves();
 
-    let mut boards = vec![board];
+    /*let mut boards = vec![board];
     for i in 0..1 {
         let now = Instant::now();
         
@@ -660,37 +324,31 @@ fn main() {
         for j in 0..boards.len() {
             let m = boards[j].gen_moves();
             total += m.len();
-
-            for k in m {
-                println!("{}", board.check_legality(&k))
-            }
         }
 
         println!("{}, in {} ns, {}", total, now.elapsed().as_millis(), i);
 
-        
-
         boards = next_layer(&boards);
-    }
+    }*/
 
-    let m = board.gen_moves();
-    println!("{}", m[m.len() - 1].display());
-    println!("{}", board.check_legality(&m[m.len() - 1]));
-
-    
-
-    for i in boards {
-        //i.display();
-    }
-    
-    
-
-    /*loop {
+    loop {
         let mut input = String::new();
         print!("\x1B[2J\x1B[1;1H");
         io::stdin().read_line(&mut input).unwrap();
-        board.make(&parse_move(&input));
-        board.display();
+        let mut attemptedmove = parse_move(&input);
+        while !board.check_legality(&attemptedmove) {
+            print!("\x1B[2J\x1B[1;1H");
+            board.display();
+            println!("That move isnt legal, try again: ");
+            input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+            attemptedmove = parse_move(&input);
+        }
+        
+        board.make(&attemptedmove);
+        //print!("\x1B[2J\x1B[1;1H");
+        
+        
 
         let moves = board.gen_moves();
         let movee = moves.choose(&mut rand::thread_rng()).unwrap();
@@ -699,7 +357,7 @@ fn main() {
         println!("{}", movee.display());
 
         board.display();
-    }*/
+    }
 
     
 
