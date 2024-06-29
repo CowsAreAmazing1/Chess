@@ -1,0 +1,14 @@
+[package]
+name = "chess"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+colored = "2.1.0"
+shuffle = "0.1.7"
+rand = "0.8.5"
+tui = "0.19"
+crossterm = "0.27.0"
+const_for = "0.1.3"
